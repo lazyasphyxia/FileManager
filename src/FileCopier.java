@@ -3,6 +3,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
 
 /**
@@ -27,20 +29,22 @@ public class FileCopier {
      *
      * @param command          полная строка команды, начинающаяся с 'copy'
      * @param currentDirectory текущая директория, из которой копируется файл
+     * @param scanner          объект Scanner для потенциального запроса подтверждения (пока не используется напрямую)
      */
     public void handleCopyCommand(String command, String currentDirectory, Scanner scanner) {
-        // Находим индекс последнего пробела в строке (перед целевой директорией)
-        int lastSpaceIndex = command.lastIndexOf(' ');
-        if (lastSpaceIndex == -1 || lastSpaceIndex <= 4) { // "copy" + пробел = 5 символов минимум
-            System.out.println("Неверный формат команды. Используйте: copy <имя_файла> <целевая_директория>");
+        // Разбор аргументов команды с учётом кавычек
+        List<String> arguments = parseArguments(command);
+        if (arguments.size() < 3) { // "copy" + source + target
+            System.out.println("Неверный формат команды. Используйте: copy <имя_файла> <целевая_директория> или copy \"<имя файла>\" \"<целевая директория>\"");
             return;
         }
 
-        String sourceFileName = command.substring(5, lastSpaceIndex).trim(); // после "copy "
-        String targetDirectoryPath = command.substring(lastSpaceIndex + 1).trim();
+        // Первый аргумент после 'copy' - это источник
+        String sourceFileName = arguments.get(1);
+        // Второй аргумент - это цель
+        String targetDirectoryPath = arguments.get(2);
 
         Path sourcePath = Paths.get(sourceFileName).normalize();
-        // Вот здесь исправление:
         Path targetDirectory = Paths.get(currentDirectory).resolve(targetDirectoryPath).normalize();
 
         try {
@@ -50,13 +54,70 @@ public class FileCopier {
             }
 
             validateSourceFile(sourcePath);
-            ensureTargetDirectoryExists(targetDirectory); // <-- Без проверки рекурсии
+            ensureTargetDirectoryExists(targetDirectory);
             Path targetPath = copyFile(sourcePath, targetDirectory);
             System.out.println("Файл успешно скопирован: " + targetPath.toAbsolutePath());
         } catch (Exception e) {
             System.err.println("Ошибка при копировании файла: " + e.getMessage());
         }
     }
+
+    /**
+     * Разбирает строку команды на аргументы, учитывая двойные кавычки как ограничители строк.
+     *
+     * @param command Полная строка команды (например, "copy \"my file.txt\" \"target dir\"")
+     * @return Список аргументов (например, ["copy", "my file.txt", "target dir"])
+     */
+    private List<String> parseArguments(String command) {
+        List<String> arguments = new ArrayList<>();
+        StringBuilder currentArg = new StringBuilder();
+        boolean insideQuotes = false;
+        boolean escaped = false;
+
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+
+            if (escaped) {
+                currentArg.append(c);
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\') {
+                if (i + 1 < command.length() && command.charAt(i + 1) == '"') {
+                    escaped = true;
+                    currentArg.append(command.charAt(i + 1)); // Добавляем '"' как обычный символ
+                    i++;
+                    continue;
+                } else {
+                    currentArg.append(c);
+                    continue;
+                }
+            }
+
+
+            if (c == '"') {
+                insideQuotes = !insideQuotes;
+            } else if (c == ' ' && !insideQuotes) {
+                // Если встречаем пробел вне кавычек, это разделитель аргументов
+                if (currentArg.length() > 0) {
+                    arguments.add(currentArg.toString());
+                    currentArg.setLength(0);
+                }
+            } else {
+                // Добавляем символ к текущему аргументу
+                currentArg.append(c);
+            }
+        }
+
+        // Не забываем добавить последний аргумент, если он есть
+        if (currentArg.length() > 0) {
+            arguments.add(currentArg.toString());
+        }
+
+        return arguments;
+    }
+
 
     /**
      * Проверяет существование и доступность исходного файла.
@@ -107,8 +168,8 @@ public class FileCopier {
         // Если файл с таким именем уже существует, добавляем суффикс
         int counter = 1;
         while (Files.exists(targetPath)) {
-            String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
-            String extension = fileName.substring(fileName.lastIndexOf('.'));
+            String baseName = fileName.lastIndexOf('.') > -1 ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+            String extension = fileName.lastIndexOf('.') > -1 ? fileName.substring(fileName.lastIndexOf('.')) : "";
             targetPath = targetDirectory.resolve(baseName + "_" + counter + extension);
             counter++;
         }
